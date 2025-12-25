@@ -9,3 +9,4 @@ cryptography        # Chiffrement cookies
 python-multipart    # Requis pour l'upload de fichiers
 pydantic-settings   # Pour gérer les variables d'env (.env)
 aiofiles            # Pour la gestion de fichiers asynchrone
+gallery-dl

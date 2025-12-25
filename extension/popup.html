@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { width: 250px; padding: 15px; font-family: sans-serif; background: #0f172a; color: white; text-align: center; }
+    h2 { margin-top: 0; color: #60a5fa; }
+    button {
+      background: #3b82f6; color: white; border: none; padding: 10px 20px;
+      border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%;
+      transition: background 0.2s;
+    }
+    button:hover { background: #2563eb; }
+    #status { margin-top: 15px; font-size: 0.9em; min-height: 20px; }
+    .success { color: #4ade80; }
+    .error { color: #f87171; }
+  </style>
+</head>
+<body>
+  <h2>🍪 MediaFetcher</h2>
+  <p style="font-size: 0.8em; color: #94a3b8; margin-bottom: 20px;">
+    Envoie les cookies du site actuel vers ton NAS.
+  </p>
+  <button id="sendBtn">Envoyer les Cookies 🚀</button>
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

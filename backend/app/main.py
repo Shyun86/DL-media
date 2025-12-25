@@ -1,82 +1,62 @@
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from arq import create_pool
-from arq.connections import RedisSettings
+from typing import List, Optional, Any
+from pathlib import Path
+from app.worker import download_media_task
+from app.cookies import CookieManager
 
-# Imports internes
-from .database import engine, Base
-from .config import settings
-from .downloader import MediaDownloader
+app = FastAPI()
 
-# --- Modèle de données pour la requête API ---
-class DownloadRequest(BaseModel):
-    url: str
-
-# --- Gestion du Cycle de Vie ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # 1. Démarrage BDD
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    
-    # 2. Connexion Redis pour l'API (pour envoyer les tâches)
-    app.state.redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
-    
-    yield
-    
-    # 3. Nettoyage
-    await app.state.redis.close()
-    await engine.dispose()
-
-app = FastAPI(title="App-DL Backend", lifespan=lifespan)
-
-# --- CONFIGURATION CORS (CRUCIAL POUR LE FRONTEND) ---
-# Autorise le frontend (React) à parler au backend (FastAPI)
+# Configuration CORS pour autoriser le Frontend ET l'Extension
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # En prod, on mettrait l'IP précise, mais "*" est plus simple ici
+    allow_origins=["*"],  # L'extension a besoin de ça
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.get("/health", tags=["System"])
-async def health_check():
-    return {"status": "ok", "service": "backend-api"}
+# Gestionnaire de cookies (stockés dans /data/cookies.txt)
+cookie_manager = CookieManager(Path("/data/cookies.txt"))
 
-# --- ROUTE API : C'est ici que le Frontend va frapper ---
-@app.post("/api/download", tags=["Media"])
-async def trigger_download(request: DownloadRequest):
-    """Reçoit une URL du frontend et l'envoie au worker."""
-    try:
-        # Envoi de la tâche au Worker via Redis
-        await app.state.redis.enqueue_job('download_media_task', request.url)
-        return {"status": "queued", "message": "Téléchargement démarré", "url": request.url}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+class DownloadRequest(BaseModel):
+    url: str
 
-# --- WORKER & TÂCHES ---
-async def download_media_task(ctx, url: str):
-    print(f"🚀 [Worker] Nouvelle tâche : {url}")
-    downloader = MediaDownloader()
-    try:
-        # Téléchargement vers le volume NAS
-        result = await downloader.download_and_process(url, "/data/media")
-        print(f"✅ [Worker] Succès : {result['filename']}")
-        return result
-    except Exception as e:
-        print(f"❌ [Worker] Erreur : {str(e)}")
-        raise e
+class CookieData(BaseModel):
+    name: str
+    value: str
+    domain: str
+    path: str
+    secure: bool
+    expirationDate: Optional[float] = None
 
-class WorkerSettings:
-    redis_settings = RedisSettings.from_dsn(settings.REDIS_URL)
-    job_timeout = 3600  # 1 heure max
-    functions = [download_media_task]
+class CookiePayload(BaseModel):
+    url: str # L'URL de la page d'où viennent les cookies
+    cookies: List[CookieData]
+
+@app.get("/")
+def read_root():
+    return {"message": "MediaFetcher Backend is Ready 🚀"}
+
+@app.post("/api/download")
+async def start_download(request: DownloadRequest):
+    if not request.url:
+        raise HTTPException(status_code=400, detail="URL is required")
     
-    async def on_startup(ctx):
-        print("🟢 [Worker] Prêt.")
+    # On délègue la tâche au worker
+    job = await download_media_task.delay(request.url)
+    return {"status": "queued", "job_id": job.job_id, "url": request.url}
 
-    async def on_shutdown(ctx):
-        print("🔴 [Worker] Arrêté.")
+@app.post("/api/update-cookies")
+async def update_cookies(payload: CookiePayload):
+    """Reçoit les cookies de l'extension et met à jour le fichier"""
+    try:
+        if not payload.cookies:
+            return {"status": "ignored", "message": "Aucun cookie reçu"}
+            
+        cookie_manager.update_cookies([c.dict() for c in payload.cookies])
+        return {"status": "success", "message": f"{len(payload.cookies)} cookies mis à jour pour {payload.url}"}
+    except Exception as e:
+        print(f"Erreur cookie: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

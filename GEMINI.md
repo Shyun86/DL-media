@@ -1,104 +1,131 @@
-# MediaFetcher — AI Context Specification
+📂 Project MediaFetcher - Master Design Document
+Vision: An all-in-one self-hosted platform to aggregate, archive, and consume social media content without cloud dependency. Current Status: Phase 4.5 (Hybrid Backend Operational / Frontend MVP in progress).
 
-## GLOBAL GOAL
+1. Project Objectives
+Centralize: Retrieve content from multiple platforms (YouTube, TikTok, X, Insta, etc.) via a single interface.
 
-Build a full-stack web application named "MediaFetcher" deployed via **Docker Compose** inside an **Alpine Linux LXC** container on Proxmox.
-Core features: Live feed aggregation (best effort), media downloading, storage on TrueNAS (SMB/NFS), and browser extension integration.
+Archive: Store media locally on a NAS (Physical data ownership).
 
----
+Organize: Manage files via a fluid web interface with virtual folders and tags, without duplicating physical files.
 
-## INFRASTRUCTURE SPECIFICATIONS
+View: Play videos and images comfortably directly from the browser (Integrated Player).
 
-- **Host OS:** Alpine Linux (LXC).
-- **Deployment:** Docker & Docker Compose (Critical for dependency management).
-- **Storage:**
-  - TrueNAS VM (on same Proxmox host).
-  - Mounted volume in Docker container: `/mnt/media`.
-- **Network:** Application handles local and remote access.
+2. Functional Specifications (Frontend & UX)
+🖥️ Dashboard
+Global View: Instant system status.
 
----
+Statistics: Download counters (In Progress / Success / Failed).
 
-## FRONTEND STACK
+Recent History: Quick logs of the latest actions.
 
-- **Framework:** React + TypeScript + Vite.
-- **UI Library:** TailwindCSS + shadcn/ui.
-- **State Management:** Zustand + TanStack Query.
-- **Video:** HTML5 Video Tag (Requires MP4/H.264/AAC compatibility).
+🏠 Home / Feed (Gallery)
+Global Feed: A "Pinterest-style" view of all stored media.
 
----
+Media Cards: Visual preview (Thumbnail), Title, Source platform icon.
 
-## BACKEND STACK (Dockerized)
+Smart Filters: By Type (Video/Image/Audio), By Platform, By Date.
 
-- **Container:** Python 3.11+ (Slim or Alpine based image).
-- **Framework:** FastAPI.
-- **Database:** PostgreSQL (Run as separate Docker service).
-- **Cache/Queue:** Redis (Run as separate Docker service).
-- **Task Queue:** Arq (Lightweight, Redis-backed) or Celery (if strict requirements).
-- **System Tools (Inside Container):**
-  - `ffmpeg` (CRITICAL for transcoding).
-  - `yt-dlp` (Latest version).
-  - `cryptography` (For cookie encryption).
+📚 Library (Organization)
+Virtual Folders: Creation of collections (e.g., "Cosplay", "Tech", "Memes") independent of physical storage.
 
----
+Multi-Membership: A single file can belong to multiple virtual folders (0 disk space duplication).
 
-## DATA & STORAGE MODEL
+Search: Global search bar (Title, Tags, Source).
 
-### Reference Counting (Strict)
-- **Physical File:** Stored on TrueNAS mount. Unique by Hash (SHA256).
-- **Virtual Link:** `LibraryItem` in DB linking User <-> MediaFile.
-- **Deletion Logic:**
-  - `DELETE LibraryItem`.
-  - Check `MediaFile.ref_count`.
-  - If 0 -> `os.remove(path_on_truenas)`.
+⚙️ Settings
+User Account: Access management (Admin/User).
 
----
+Connections: Cookie status (YouTube Premium, Twitter, etc.).
 
-## MEDIA PROCESSING PIPELINE
+Storage: Visualization of NAS disk space used/remaining.
 
-1.  **Input:** URL from Extension or Feed.
-2.  **Download:** `yt-dlp` attempts to download best quality.
-3.  **Verification:** Check container and codec (`ffprobe`).
-4.  **Transcode (If needed):**
-    - If format != mp4 OR codec != h264:
-    - Run `ffmpeg -i input -c:v libx264 -c:a aac output.mp4`.
-    - *Note:* This ensures playback on all browsers (iOS/Desktop).
+🧩 Browser Extension
+Role: Secure bridge between the browser and the server.
 
----
+Functions:
 
-## FEED AGGREGATION ("HARDCORE" MODE)
+Automatic cookie export to the Backend.
 
-- **Fail-Safe:** Connectors must implement try/catch blocks.
-- **Behavior:** If a connector fails (timeout/ban), return empty list. Do NOT retry aggressively.
-- **Session:** Use encrypted cookies provided by the extension.
+Media detection on the active page.
 
----
+"Quick Download" button (Send to NAS).
 
-## BROWSER EXTENSION
+3. Technical Specifications (Backend & Engine)
+🧱 Architecture
+Type: Modular Monolithic Web Application (Frontend SPA + Backend API).
 
-- **Manifest V3.**
-- **No VPN Automation:** User is responsible for network context (VPN) when exporting cookies.
-- **Features:**
-  - Button: "Send Cookie Jar to Server".
-  - Button: "Download This Media".
+Containerization: Docker Compose (Isolated services).
 
----
+Communication: REST API (FastAPI) + WebSocket (Real-time) + Queue (Redis).
 
-## SECURITY
+⚙️ Tech Stack
+Frontend: React 18, TypeScript, TailwindCSS, Vite.
 
-- **Cookies:** AES-GCM encrypted in DB.
-- **CORS:** Configure to allow Extension Origin.
-- **Auth:** JWT for Frontend, Token for Extension.
+Backend: Python 3.11, FastAPI.
 
----
+Queue & Workers: Redis + Arq (Asynchronous download management).
 
-## DEVELOPMENT STEPS
+Database: PostgreSQL (Metadata, Users, Virtual structure).
 
-1.  **Infrastructure:** Write `docker-compose.yml` (Postgres, Redis, Backend, Frontend-builder).
-2.  **Backend Core:** FastAPI setup + Database Models + Ref Counting Logic.
-3.  **Downloader:** `yt-dlp` + `ffmpeg` wrapper implementation.
-4.  **Frontend:** Dashboard + Video Player.
-5.  **Extension:** Basic popup and API communication.
+Physical Storage: NAS (TrueNAS Scale) mounted via NFS/SMB in containers.
 
----
+🔧 Download Engines (The "Brain")
+The system uses a Hybrid strategy to guarantee the best quality:
 
-END OF SPECIFICATION
+Analysis (Probe): The worker inspects the URL via yt-dlp to determine content type.
+
+Smart Routing:
+
+🎥 Video (YouTube, TikTok, Twitch): Engine yt-dlp. Forced conversion to MP4 (H.264/AAC) for maximum web compatibility.
+
+🎵 Audio (Soundcloud): Engine yt-dlp. Extraction to MP3 (192kbps).
+
+🖼️ Image (X/Twitter, Insta, Pinterest): Engine gallery-dl. Download of the original (JPG/PNG/WEBP) without destructive conversion.
+
+Finalization:
+
+SHA256 Hash calculation (Binary deduplication).
+
+Renaming: {sha256}.{ext}.
+
+Atomic move to /media.
+
+4. Security & Authentication
+Cookie Management:
+
+Cookies are never exposed to the Frontend.
+
+Transfer flow: Extension -> API (Secure POST) -> cookies.txt File (Backend only).
+
+Format: Netscape (compatible with yt-dlp and gallery-dl).
+
+Pairing: The extension communicates only with the server's local IP.
+
+Encryption (Target V1.5): AES encrypted storage of cookies at rest.
+
+5. Data Organization
+Physical Structure (On Disk/NAS)
+The directory structure is Flat to ensure compatibility with other software (Plex, Jellyfin):
+
+Plaintext
+
+/mnt/truenas/App-DL/media/
+├── tmp/            # Temporary workspace
+└── final/          # Definitive storage (hashed filenames)
+Logical Structure (Database)
+Organization is managed by PostgreSQL:
+
+Table Media: ID, Hash, Path, Metadata, Type.
+
+Table Folder: ID, Name, Parent_ID.
+
+Table MediaFolder: Junction table (n-n) allowing one media to be in multiple folders.
+
+6. Development Philosophy
+Stable First: If one engine fails, the other takes over (Fallback). No silent crashes.
+
+Agnostic: The system treats Video, Audio, and Image with equal care.
+
+Local First: Everything is stored locally, nothing in the cloud.
+
+Extensible: Worker architecture allows adding other engines later (e.g., torrent, aria2).
