@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+sqlalchemy          # ORM indispensable
+asyncpg             # Driver Postgres asynchrone (Ultra rapide)
+redis               # Connecteur Redis
+arq                 # Pour les Workers
+yt-dlp              # Téléchargement
+cryptography        # Chiffrement cookies
+python-multipart    # Requis pour l'upload de fichiers
+pydantic-settings   # Pour gérer les variables d'env (.env)
+aiofiles            # Pour la gestion de fichiers asynchrone
