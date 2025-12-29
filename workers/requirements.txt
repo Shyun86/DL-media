@@ -1,2 +1,14 @@
+# Arq and Redis for task queueing
 arq
 redis
+
+# Database dependencies
+sqlalchemy
+asyncpg
+
+# Configuration
+pydantic-settings
+
+# Downloader engines
+yt-dlp
+gallery-dl

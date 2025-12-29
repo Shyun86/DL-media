@@ -1,62 +1,102 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional, Any
+from typing import List
 from pathlib import Path
-from app.worker import download_media_task
-from app.cookies import CookieManager
+import redis.asyncio as redis
+from arq import create_pool
+from arq.connections import RedisSettings
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+# App-specific imports
+from . import models, schemas
+from .database import init_db, get_db
+from .cookies import CookieManager
+from .config import settings
 
 app = FastAPI()
 
-# Configuration CORS pour autoriser le Frontend ET l'Extension
+# Add a startup event to initialize the database
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from typing import List
+from pathlib import Path
+import redis.asyncio as redis
+from arq import create_pool
+from arq.connections import RedisSettings
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from urllib.parse import urlparse
+
+# App-specific imports
+from . import models, schemas
+from .database import init_db, get_db
+from .cookies import CookieManager
+from .config import settings
+
+app = FastAPI()
+
+# Add a startup event to initialize the database
+@app.on_event("startup")
+async def startup_event():
+    await init_db()
+    # Parse the Redis URL to get host and port
+    redis_url = urlparse(settings.REDIS_URL)
+    # Initialize Redis pool for Arq
+    app.state.redis_pool = await create_pool(
+        RedisSettings(host=redis_url.hostname, port=redis_url.port)
+    )
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    if app.state.redis_pool:
+        await app.state.redis_pool.close()
+
+# Configuration CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # L'extension a besoin de ça
+    allow_origins=settings.ALLOWED_ORIGINS.split(','),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Gestionnaire de cookies (stockés dans /data/cookies.txt)
 cookie_manager = CookieManager(Path("/data/cookies.txt"))
-
-class DownloadRequest(BaseModel):
-    url: str
-
-class CookieData(BaseModel):
-    name: str
-    value: str
-    domain: str
-    path: str
-    secure: bool
-    expirationDate: Optional[float] = None
-
-class CookiePayload(BaseModel):
-    url: str # L'URL de la page d'où viennent les cookies
-    cookies: List[CookieData]
 
 @app.get("/")
 def read_root():
     return {"message": "MediaFetcher Backend is Ready 🚀"}
 
-@app.post("/api/download")
-async def start_download(request: DownloadRequest):
+@app.post("/api/download", response_model=schemas.DownloadResponse)
+async def enqueue_download(request: schemas.DownloadRequest, redis_pool: redis.Redis = Depends(lambda: app.state.redis_pool)):
     if not request.url:
         raise HTTPException(status_code=400, detail="URL is required")
     
-    # On délègue la tâche au worker
-    job = await download_media_task.delay(request.url)
-    return {"status": "queued", "job_id": job.job_id, "url": request.url}
+    job = await redis_pool.enqueue_job("download_media_task", request.url, _queue_name="arq:queue")
+    return {"job_id": job.job_id, "status": "queued"}
 
-@app.post("/api/update-cookies")
-async def update_cookies(payload: CookiePayload):
-    """Reçoit les cookies de l'extension et met à jour le fichier"""
+@app.post("/api/update-cookies", response_model=schemas.CookieUpdateResponse)
+async def update_cookies(payload: schemas.CookieUpdateRequest):
+    """Receives cookies from the extension and updates the file."""
     try:
         if not payload.cookies:
-            return {"status": "ignored", "message": "Aucun cookie reçu"}
+            return schemas.CookieUpdateResponse(status="ignored", count=0)
             
         cookie_manager.update_cookies([c.dict() for c in payload.cookies])
-        return {"status": "success", "message": f"{len(payload.cookies)} cookies mis à jour pour {payload.url}"}
+        return schemas.CookieUpdateResponse(status="success", count=len(payload.cookies))
     except Exception as e:
-        print(f"Erreur cookie: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/media", response_model=List[schemas.Media])
+async def list_media(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(models.Media).limit(100))
+    media_items = result.scalars().all()
+    return media_items
+
+@app.get("/api/folders", response_model=List[schemas.Folder])
+async def list_folders(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(models.Folder))
+    folders = result.scalars().all()
+    return folders

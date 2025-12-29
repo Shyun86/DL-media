@@ -33,21 +33,24 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      # CORRECTION ICI : Pas de tirets "-", on utilise le nom du service comme clé
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started # 'started' suffit car Redis n'a pas de healthcheck défini
+        condition: service_started
     environment:
-      # Noms d'hôtes corrigés pour correspondre aux container_names ou services
-      DATABASE_URL: "postgresql+asyncpg://user:password@mediafetcher_postgres/mediafetcher"
-      REDIS_URL: "redis://mediafetcher_redis:6379"
+      DATABASE_URL: "postgresql+asyncpg://user:password@postgres/mediafetcher"
+      REDIS_URL: "redis://redis:6379"
+      ALLOWED_ORIGINS: "*"
+      NAS_MEDIA_PATH: "/data/media"
     restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
     container_name: mediafetcher_frontend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
     ports:
       - "5173:5173"
     depends_on:
@@ -56,18 +59,18 @@ services:
   
   worker:
     build:
-      context: ./backend
+      context: ./workers
     container_name: mediafetcher_worker
     command: arq app.main.WorkerSettings 
     volumes:
       - /mnt/truenas/App-DL/media:/data/media
     depends_on:
-      # CORRECTION ICI AUSSI
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
     environment:
-      DATABASE_URL: "postgresql+asyncpg://user:password@mediafetcher_postgres/mediafetcher"
-      REDIS_URL: "redis://mediafetcher_redis:6379"
+      DATABASE_URL: "postgresql+asyncpg://user:password@postgres/mediafetcher"
+      REDIS_URL: "redis://redis:6379"
+      NAS_MEDIA_PATH: "/data/media"
     restart: unless-stopped
